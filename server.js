@@ -189,7 +189,9 @@ app.get('/api/orders', verifyToken, (req, res) => {
   });
 });
 
-// ========== 修复后的退码 ==========
+// ============================================================
+// ========== ✅ 修复后的退码（余额返还正确） ==========
+// ============================================================
 app.post('/api/refund', verifyToken, (req, res) => {
   const { codes } = req.body;
   if (!codes || !Array.isArray(codes) || codes.length === 0) {
@@ -197,7 +199,6 @@ app.post('/api/refund', verifyToken, (req, res) => {
   }
   const now = Date.now();
   const halfHour = 30 * 60 * 1000;
-  // 只查询当前用户、在30分钟内的订单
   const placeholders = codes.map(() => '?').join(',');
   const sql = `SELECT * FROM orders WHERE username = ? AND code IN (${placeholders}) AND (${now} - timestamp) <= ? ORDER BY timestamp DESC`;
   db.all(sql, [req.user.username, ...codes, halfHour], (err, rows) => {
@@ -209,13 +210,16 @@ app.post('/api/refund', verifyToken, (req, res) => {
     rows.forEach(row => refundAmount += row.multiple);
     const ids = rows.map(r => r.id);
     const idPlaceholders = ids.map(() => '?').join(',');
+    // 1. 删除订单
     db.run(`DELETE FROM orders WHERE id IN (${idPlaceholders}) AND username = ?`, [...ids, req.user.username], function(err) {
       if (err) return res.status(500).json({ error: err.message });
+      // 2. ✅ 返还余额（注意：这里是 + 号，不是 - 号）
       db.run('UPDATE users SET balance = balance + ? WHERE username = ?', [refundAmount, req.user.username], function(err) {
         if (err) return res.status(500).json({ error: err.message });
+        // 3. 记录日志
         const logSql = 'INSERT INTO logs (time, user, type, amount, balance, detail) VALUES (?, ?, ?, ?, ?, ?)';
         db.run(logSql, [new Date().toISOString(), req.user.username, '退码', refundAmount, 0, `撤销${rows.length}注，返还${refundAmount}`]);
-        res.json({ newBalance: refundAmount, message: `成功撤销${rows.length}注` });
+        res.json({ newBalance: refundAmount, message: `成功撤销${rows.length}注，返还${refundAmount}元` });
       });
     });
   });
@@ -283,13 +287,19 @@ app.post('/api/admin/adjust-balance', verifyToken, verifyAdmin, (req, res) => {
   });
 });
 
+// ========== 删除用户（管理员） ==========
 app.post('/api/admin/delete-user', verifyToken, verifyAdmin, (req, res) => {
   const { username } = req.body;
   if (!username) return res.status(400).json({ error: '缺少用户名' });
+  if (username === req.user.username) {
+    return res.status(400).json({ error: '不能删除当前登录账号' });
+  }
   db.run('DELETE FROM users WHERE username = ?', [username], function(err) {
     if (err) return res.status(500).json({ error: err.message });
     db.run('DELETE FROM orders WHERE username = ?', [username]);
     db.run('DELETE FROM paid_awards WHERE username = ?', [username]);
+    const logSql = 'INSERT INTO logs (time, user, type, amount, balance, detail) VALUES (?, ?, ?, ?, ?, ?)';
+    db.run(logSql, [new Date().toISOString(), req.user.username, '删除账号', 0, 0, `删除用户 ${username}`]);
     res.json({ message: '用户已删除' });
   });
 });

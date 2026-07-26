@@ -77,6 +77,7 @@ function verifyAdmin(req, res, next) {
   });
 }
 
+// ========== 注册（管理员） ==========
 app.post('/api/register', (req, res) => {
   const { username, password, adminKey } = req.body;
   if (!username || !password || !adminKey) {
@@ -99,6 +100,7 @@ app.post('/api/register', (req, res) => {
   });
 });
 
+// ========== 登录 ==========
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -119,6 +121,7 @@ app.post('/api/login', (req, res) => {
   });
 });
 
+// ========== 获取用户信息 ==========
 app.get('/api/user', verifyToken, (req, res) => {
   db.get('SELECT username, balance, role, temp, expire FROM users WHERE username = ?', [req.user.username], (err, user) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -127,6 +130,7 @@ app.get('/api/user', verifyToken, (req, res) => {
   });
 });
 
+// ========== 修改密码 ==========
 app.post('/api/change-password', verifyToken, (req, res) => {
   const { oldPassword, newPassword } = req.body;
   if (!oldPassword || !newPassword) return res.status(400).json({ error: '请完整填写' });
@@ -146,6 +150,7 @@ app.post('/api/change-password', verifyToken, (req, res) => {
   });
 });
 
+// ========== 下单 ==========
 app.post('/api/order', verifyToken, (req, res) => {
   const { lottery, codes, multiple } = req.body;
   if (!lottery || !codes || !Array.isArray(codes) || codes.length === 0) {
@@ -176,6 +181,7 @@ app.post('/api/order', verifyToken, (req, res) => {
   });
 });
 
+// ========== 获取用户订单 ==========
 app.get('/api/orders', verifyToken, (req, res) => {
   db.all('SELECT * FROM orders WHERE username = ? ORDER BY timestamp DESC', [req.user.username], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -183,6 +189,7 @@ app.get('/api/orders', verifyToken, (req, res) => {
   });
 });
 
+// ========== 修复后的退码 ==========
 app.post('/api/refund', verifyToken, (req, res) => {
   const { codes } = req.body;
   if (!codes || !Array.isArray(codes) || codes.length === 0) {
@@ -190,31 +197,31 @@ app.post('/api/refund', verifyToken, (req, res) => {
   }
   const now = Date.now();
   const halfHour = 30 * 60 * 1000;
+  // 只查询当前用户、在30分钟内的订单
   const placeholders = codes.map(() => '?').join(',');
-  const sql = `SELECT * FROM orders WHERE username = ? AND code IN (${placeholders}) ORDER BY timestamp DESC`;
-  db.all(sql, [req.user.username, ...codes], (err, rows) => {
+  const sql = `SELECT * FROM orders WHERE username = ? AND code IN (${placeholders}) AND (${now} - timestamp) <= ? ORDER BY timestamp DESC`;
+  db.all(sql, [req.user.username, ...codes, halfHour], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    if (rows.length === 0) return res.status(400).json({ error: '未找到匹配订单' });
-    const validRows = rows.filter(row => (now - row.timestamp) <= halfHour);
-    if (validRows.length === 0) {
-      return res.status(400).json({ error: '所有选择号码均已超时，不可撤销' });
+    if (rows.length === 0) {
+      return res.status(400).json({ error: '未找到可撤销的订单（可能已超时）' });
     }
     let refundAmount = 0;
-    validRows.forEach(row => refundAmount += row.multiple);
-    const ids = validRows.map(r => r.id);
+    rows.forEach(row => refundAmount += row.multiple);
+    const ids = rows.map(r => r.id);
     const idPlaceholders = ids.map(() => '?').join(',');
-    db.run(`DELETE FROM orders WHERE id IN (${idPlaceholders})`, ids, function(err) {
+    db.run(`DELETE FROM orders WHERE id IN (${idPlaceholders}) AND username = ?`, [...ids, req.user.username], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       db.run('UPDATE users SET balance = balance + ? WHERE username = ?', [refundAmount, req.user.username], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         const logSql = 'INSERT INTO logs (time, user, type, amount, balance, detail) VALUES (?, ?, ?, ?, ?, ?)';
-        db.run(logSql, [new Date().toISOString(), req.user.username, '退码', refundAmount, 0, `撤销${validRows.length}注，返还${refundAmount}`]);
-        res.json({ newBalance: refundAmount, message: `成功撤销${validRows.length}注` });
+        db.run(logSql, [new Date().toISOString(), req.user.username, '退码', refundAmount, 0, `撤销${rows.length}注，返还${refundAmount}`]);
+        res.json({ newBalance: refundAmount, message: `成功撤销${rows.length}注` });
       });
     });
   });
 });
 
+// ========== 派奖（用户自用） ==========
 app.post('/api/payout', verifyToken, (req, res) => {
   const { lines } = req.body;
   if (!lines || !Array.isArray(lines) || lines.length === 0) {
@@ -247,7 +254,7 @@ app.post('/api/payout', verifyToken, (req, res) => {
   });
 });
 
-// ---------- 管理员接口 ----------
+// ========== 管理员接口 ==========
 app.get('/api/admin/orders', verifyToken, verifyAdmin, (req, res) => {
   db.all('SELECT * FROM orders ORDER BY timestamp DESC', (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });

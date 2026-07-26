@@ -183,7 +183,6 @@ app.get('/api/orders', verifyToken, (req, res) => {
   });
 });
 
-// ========== ✅ 修复后的退码（余额返还正确） ==========
 app.post('/api/refund', verifyToken, (req, res) => {
   const { codes } = req.body;
   if (!codes || !Array.isArray(codes) || codes.length === 0) {
@@ -204,7 +203,6 @@ app.post('/api/refund', verifyToken, (req, res) => {
     const idPlaceholders = ids.map(() => '?').join(',');
     db.run(`DELETE FROM orders WHERE id IN (${idPlaceholders}) AND username = ?`, [...ids, req.user.username], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      // ✅ 退码返还余额（加号）
       db.run('UPDATE users SET balance = balance + ? WHERE username = ?', [refundAmount, req.user.username], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         const logSql = 'INSERT INTO logs (time, user, type, amount, balance, detail) VALUES (?, ?, ?, ?, ?, ?)';

@@ -77,7 +77,6 @@ function verifyAdmin(req, res, next) {
   });
 }
 
-// ========== 注册（管理员） ==========
 app.post('/api/register', (req, res) => {
   const { username, password, adminKey } = req.body;
   if (!username || !password || !adminKey) {
@@ -100,7 +99,6 @@ app.post('/api/register', (req, res) => {
   });
 });
 
-// ========== 登录 ==========
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -121,7 +119,6 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// ========== 获取用户信息 ==========
 app.get('/api/user', verifyToken, (req, res) => {
   db.get('SELECT username, balance, role, temp, expire FROM users WHERE username = ?', [req.user.username], (err, user) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -130,7 +127,6 @@ app.get('/api/user', verifyToken, (req, res) => {
   });
 });
 
-// ========== 修改密码 ==========
 app.post('/api/change-password', verifyToken, (req, res) => {
   const { oldPassword, newPassword } = req.body;
   if (!oldPassword || !newPassword) return res.status(400).json({ error: '请完整填写' });
@@ -150,7 +146,6 @@ app.post('/api/change-password', verifyToken, (req, res) => {
   });
 });
 
-// ========== 下单 ==========
 app.post('/api/order', verifyToken, (req, res) => {
   const { lottery, codes, multiple } = req.body;
   if (!lottery || !codes || !Array.isArray(codes) || codes.length === 0) {
@@ -163,7 +158,7 @@ app.post('/api/order', verifyToken, (req, res) => {
     if (user.balance < totalAmount) {
       return res.status(400).json({ error: '余额不足' });
     }
-    db.run('UPDATE users SET balance = balance + ? WHERE username = ?', [totalAmount, req.user.username], function(err) {
+    db.run('UPDATE users SET balance = balance - ? WHERE username = ?', [totalAmount, req.user.username], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       const now = new Date();
       const timeStr = now.toISOString().replace('T', ' ').slice(0, 16);
@@ -181,7 +176,6 @@ app.post('/api/order', verifyToken, (req, res) => {
   });
 });
 
-// ========== 获取用户订单 ==========
 app.get('/api/orders', verifyToken, (req, res) => {
   db.all('SELECT * FROM orders WHERE username = ? ORDER BY timestamp DESC', [req.user.username], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -189,9 +183,7 @@ app.get('/api/orders', verifyToken, (req, res) => {
   });
 });
 
-// ============================================================
 // ========== ✅ 修复后的退码（余额返还正确） ==========
-// ============================================================
 app.post('/api/refund', verifyToken, (req, res) => {
   const { codes } = req.body;
   if (!codes || !Array.isArray(codes) || codes.length === 0) {
@@ -210,13 +202,11 @@ app.post('/api/refund', verifyToken, (req, res) => {
     rows.forEach(row => refundAmount += row.multiple);
     const ids = rows.map(r => r.id);
     const idPlaceholders = ids.map(() => '?').join(',');
-    // 1. 删除订单
     db.run(`DELETE FROM orders WHERE id IN (${idPlaceholders}) AND username = ?`, [...ids, req.user.username], function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      // 2. ✅ 返还余额（注意：这里是 + 号，不是 - 号）
+      // ✅ 退码返还余额（加号）
       db.run('UPDATE users SET balance = balance + ? WHERE username = ?', [refundAmount, req.user.username], function(err) {
         if (err) return res.status(500).json({ error: err.message });
-        // 3. 记录日志
         const logSql = 'INSERT INTO logs (time, user, type, amount, balance, detail) VALUES (?, ?, ?, ?, ?, ?)';
         db.run(logSql, [new Date().toISOString(), req.user.username, '退码', refundAmount, 0, `撤销${rows.length}注，返还${refundAmount}`]);
         res.json({ newBalance: refundAmount, message: `成功撤销${rows.length}注，返还${refundAmount}元` });
@@ -225,7 +215,6 @@ app.post('/api/refund', verifyToken, (req, res) => {
   });
 });
 
-// ========== 派奖（用户自用） ==========
 app.post('/api/payout', verifyToken, (req, res) => {
   const { lines } = req.body;
   if (!lines || !Array.isArray(lines) || lines.length === 0) {
@@ -258,7 +247,6 @@ app.post('/api/payout', verifyToken, (req, res) => {
   });
 });
 
-// ========== 管理员接口 ==========
 app.get('/api/admin/orders', verifyToken, verifyAdmin, (req, res) => {
   db.all('SELECT * FROM orders ORDER BY timestamp DESC', (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -287,7 +275,6 @@ app.post('/api/admin/adjust-balance', verifyToken, verifyAdmin, (req, res) => {
   });
 });
 
-// ========== 删除用户（管理员） ==========
 app.post('/api/admin/delete-user', verifyToken, verifyAdmin, (req, res) => {
   const { username } = req.body;
   if (!username) return res.status(400).json({ error: '缺少用户名' });

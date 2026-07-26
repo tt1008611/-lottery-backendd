@@ -163,7 +163,7 @@ app.post('/api/order', verifyToken, (req, res) => {
     if (user.balance < totalAmount) {
       return res.status(400).json({ error: '余额不足' });
     }
-    db.run('UPDATE users SET balance = balance - ? WHERE username = ?', [totalAmount, req.user.username], function(err) {
+    db.run('UPDATE users SET balance = balance + ? WHERE username = ?', [totalAmount, req.user.username], function(err) {
       if (err) return res.status(500).json({ error: err.message });
       const now = new Date();
       const timeStr = now.toISOString().replace('T', ' ').slice(0, 16);
